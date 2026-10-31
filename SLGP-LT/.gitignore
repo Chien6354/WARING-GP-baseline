@@ -1,0 +1,21 @@
+# IDE 配置
+.idea/
+*.iml
+.vscode/
+
+# 大数据与日志
+data/
+csv/
+pkl/
+imgs/
+log/
+log.zip
+*.zip
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/

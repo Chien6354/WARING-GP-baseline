@@ -1,0 +1,30 @@
+@echo off
+:: 设置 Python 解释器路径
+set PYTHON_EXE="D:\Software\Python\python.exe"
+
+:: 创建日志目录（如果不存在）
+mkdir log 2>nul
+
+:: 定义 dataset 的取值范围
+set "datasets=cifar10,MRD"
+
+:: 循环 dataset 和 augment 参数
+for %%d in (%datasets%) do (
+    for %%a in (False) do (
+        echo Running with dataset=%%d, augment=%%a
+
+        if "%%d" == "cifar10" (
+            :: For cifar10: 3,5,6,12,13-21
+            for %%i in (3 5 6 12 13 14 15 16 17 18 19 20 21) do (
+                echo Running: %PYTHON_EXE% main_all.py --log_file "log/MEGPE_F1_%%d_%%i.log" --pkl_file "log/F1_%%d_%%i.pkl" --dataset %%d --randomSeeds %%i
+                %PYTHON_EXE% main_all.py --log_file "log/MEGPE_F1_%%d_%%i.log" --pkl_file "log/F1_%%d_%%i.pkl" --dataset %%d --randomSeeds %%i
+            )
+        ) else (
+            :: For MRD: 18-22
+            for %%i in (18 19 20 21 22) do (
+                echo Running: %PYTHON_EXE% main_all.py --log_file "log/MEGPE_F1_%%d_%%i.log" --pkl_file "log/F1_%%d_%%i.pkl" --dataset %%d --randomSeeds %%i
+                %PYTHON_EXE% main_all.py --log_file "log/MEGPE_F1_%%d_%%i.log" --pkl_file "log/F1_%%d_%%i.pkl" --dataset %%d --randomSeeds %%i
+            )
+        )
+    )
+)

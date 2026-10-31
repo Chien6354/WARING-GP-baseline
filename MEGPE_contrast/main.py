@@ -1,0 +1,901 @@
+# python packages
+import argparse
+import random
+import time
+import operator
+
+
+from scipy.ndimage import zoom
+from sympy import transpose
+
+import evalGP_main as evalGP
+# only for strongly typed GP
+import gp_restrict
+import numpy as np
+import select_nsga
+from deap import base, creator, tools, gp
+from strongGPDataType import Int1, Int2, Int3, Float1, Float2, Float3, Img, Img1, Vector, Vector1
+import feature_function as fe_fs
+from sklearn.svm import LinearSVC
+from sklearn.metrics import confusion_matrix, classification_report, f1_score
+from sklearn import preprocessing
+from sklearn.model_selection import StratifiedKFold
+import sys
+from data.ImbalanceCIFAR import IMBALANCECIFAR10,IMBALANCEFMNIST,IMBALANCEMNIST,IMBALANCESTL10,imbalance_MRBand
+import warnings
+import multiprocessing
+import hashlib
+import pickle
+from data.autoaugment import data_augmentation
+from functools import wraps
+from threading import Lock
+from sklearn.metrics import accuracy_score
+
+warnings.simplefilter("ignore")
+'FLGP_MEGPE'
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--log_file", default="log/main.log", help="log file name", type=str
+)
+parser.add_argument(
+    "--pkl_file", help="pkl file name", default="log/latest_population.pkl"
+)
+parser.add_argument(
+    "--dataset",
+    help="Dataset name (choose from the provided options)",
+    type=str,
+    choices=["mnist", "cifar10", "fashion_minist", "STL", "MRB", "MRD", "MBI","SVHN", "EuroSAT"],  # 限制可选值
+    default="mnist"  # 设置默认值
+)
+parser.add_argument(
+    "--randomSeeds",default=1
+)
+
+parser.add_argument(
+    "--lt_mode",
+    help="CIFAR-10 长尾构造模式: fixed=固定数组[200..20]; exp=按指数构造(头400/尾20/不平衡比例20)。数据均从上级 data 目录加载",
+    type=str,
+    choices=["fixed", "exp"],
+    default="fixed"
+)
+
+parser.add_argument(
+    "--disable_imb_test",
+    help="关闭最终 test 阶段在不平衡测试集(x_test_imb)上的评估 (默认不关闭, 即仍会评估不平衡测试集)",
+    action="store_true"
+)
+
+parser.add_argument("--population", help="GP 种群数量 (默认 100)", type=int, default=100)
+parser.add_argument("--generation", help="GP 进化代数 (默认 50)", type=int, default=50)
+parser.add_argument("--num_processes", help="并行评估进程数 (默认 10)", type=int, default=10)
+
+opt = parser.parse_args()
+
+# 共享数据集根目录: 项目目录上一级的 data 文件夹 (按 main.py 位置相对定位, 与盘符无关)
+import os
+DATASETS_ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data'))
+
+
+# Logger class remains unchanged
+class Logger(object):
+    def __init__(self, filename='default.log', stream=None, add_flag=True,
+                 encoding='utf-8', keep_open=True):
+        """
+        filename   : 日志文件路径
+        stream     : 原始输出流（通常是 sys.stdout）
+        add_flag   : True->追加 (a)，False->覆盖 (w)
+        encoding   : 写入文件时使用的编码（Windows 记事本请用 'utf-8-sig' 或 'gbk'）
+        keep_open  : True->程序运行期间保持文件打开（性能好），False->每次写入打开/关闭
+        """
+        self.terminal = stream if stream is not None else sys.stdout
+        self.filename = filename
+        self.add_flag = bool(add_flag)
+        self.encoding = encoding
+        self.mode = 'a' if self.add_flag else 'w'
+        self.keep_open = bool(keep_open)
+        self._log = None
+        if self.keep_open:
+            # 打开文件（若目录不存在会抛错，按需先创建目录）
+            self._log = open(self.filename, self.mode, encoding=self.encoding)
+
+    def write(self, message):
+        # 避免 None 或空字符串导致问题
+        if message is None or message == '':
+            return
+        # 先写到终端（保持原有行为）
+        try:
+            self.terminal.write(message)
+        except Exception:
+            # 如果终端写入失败，也不要阻塞日志写文件
+            pass
+        # 再写到文件
+        try:
+            if self.keep_open:
+                self._log.write(message)
+                # 保证关键日志及时落盘
+                self._log.flush()
+            else:
+                with open(self.filename, self.mode, encoding=self.encoding) as log:
+                    log.write(message)
+        except Exception:
+            # 忽略文件写入的异常（或根据需求抛出/记录）
+            pass
+
+    def flush(self):
+        # 支持 flush，某些库会调用
+        try:
+            self.terminal.flush()
+        except Exception:
+            pass
+        try:
+            if self._log:
+                self._log.flush()
+        except Exception:
+            pass
+
+    def isatty(self):
+        try:
+            return self.terminal.isatty()
+        except Exception:
+            return False
+
+    def close(self):
+        try:
+            if self._log:
+                self._log.close()
+                self._log = None
+        except Exception:
+            pass
+
+    def __del__(self):
+        self.close()
+
+
+def create_dataset(dataset):
+    """
+    返回:
+    x_train, y_train,
+    x_test_balanced, y_test_balanced,
+    x_test_imbalanced, y_test_imbalanced,
+    Is_RGB
+    """
+    import numpy
+    # 初始化变量以避免未定义错误
+    train_dataset = None
+    test_dataset_bal = None
+    test_dataset_imb = None
+    x_train, y_train, x_test_bal, y_test_bal, x_test_imb, y_test_imb = None, None, None, None, None, None
+
+    if dataset == "cifar10":
+        # 实例化三个数据集
+        cifar_root = os.path.join(DATASETS_ROOT, 'CIFAR-10')
+        train_dataset = IMBALANCECIFAR10("train", imbalance_ratio=100, root=cifar_root, lt_mode=opt.lt_mode)
+        test_dataset_bal = IMBALANCECIFAR10("test", imbalance_ratio=100, root=cifar_root, lt_mode=opt.lt_mode)
+        test_dataset_imb = IMBALANCECIFAR10("test_Imbalanced", imbalance_ratio=100, root=cifar_root, lt_mode=opt.lt_mode)
+        Is_RGB = True
+        Flag = 1
+
+    elif dataset == "STL":
+        # 实例化三个数据集 (STL-10 需要 download=True)
+        train_dataset = IMBALANCESTL10(phase="train", imbalance_ratio=0.01, root=os.path.join(DATASETS_ROOT, 'STL-10'), download=True)
+        test_dataset_bal = IMBALANCESTL10(phase="test", imbalance_ratio=0.01, root=os.path.join(DATASETS_ROOT, 'STL-10'), download=True)
+        test_dataset_imb = IMBALANCESTL10(phase="test_Imbalanced", imbalance_ratio=0.01, root=os.path.join(DATASETS_ROOT, 'STL-10'),
+                                          download=True)
+        Is_RGB = True
+        Flag = 2
+
+    elif dataset == "fashion_mnist":
+        train_dataset = IMBALANCEFMNIST("train", imbalance_ratio=100, root=os.path.join(DATASETS_ROOT, 'Fashion_minist'))
+        test_dataset_bal = IMBALANCEFMNIST("test", imbalance_ratio=100, root=os.path.join(DATASETS_ROOT, 'Fashion_minist'))
+        test_dataset_imb = IMBALANCEFMNIST("test_Imbalanced", imbalance_ratio=100, root=os.path.join(DATASETS_ROOT, 'Fashion_minist'))
+        Is_RGB = False
+        Flag = 1
+
+    elif dataset == "SVHN" or dataset == "EuroSAT":
+        # Numpy 加载路径 (统一从共享 data 文件夹加载)
+        npy_root = DATASETS_ROOT
+        x_train_raw = numpy.load(npy_root + '/' + dataset + '/' + dataset + '_train_data.npy') / 255.0
+        y_train_raw = numpy.load(npy_root + '/' + dataset + '/' + dataset + '_train_label.npy')
+        x_test_raw = numpy.load(npy_root + '/' + dataset + '/' + dataset + '_test_data.npy') / 255.0
+        y_test_raw = numpy.load(npy_root + '/' + dataset + '/' + dataset + '_test_label.npy')
+
+        Is_RGB = True
+        Flag = 4
+
+    else:
+        if dataset == "mnist":
+            train_dataset = IMBALANCEMNIST("train", imbalance_ratio=100, root=os.path.join(DATASETS_ROOT, 'MNIST'))
+            test_dataset_bal = IMBALANCEMNIST("test", imbalance_ratio=100, root=os.path.join(DATASETS_ROOT, 'MNIST'))
+            test_dataset_imb = IMBALANCEMNIST("test_Imbalanced", imbalance_ratio=100, root=os.path.join(DATASETS_ROOT, 'MNIST'))
+            Flag = 1
+        else:
+            # 其他自定义 Numpy 数据集
+            x_train_raw = numpy.load(os.path.join(DATASETS_ROOT, dataset, dataset + '_train_data.npy')) / 255.0
+            y_train_raw = numpy.load(os.path.join(DATASETS_ROOT, dataset, dataset + '_train_label.npy'))
+            x_test_raw = numpy.load(os.path.join(DATASETS_ROOT, dataset, dataset + '_test_data.npy')) / 255.0
+            y_test_raw = numpy.load(os.path.join(DATASETS_ROOT, dataset, dataset + '_test_label.npy'))
+            Flag = 3
+        Is_RGB = False
+
+    # --- 数据处理逻辑 ---
+
+    if Flag == 1:
+        # CIFAR10, FMNIST, MNIST (Torch Dataset 路径)
+        # 提取训练集
+        x_train = train_dataset.data
+        y_train = numpy.array(train_dataset.labels)
+
+        # 提取平衡测试集
+        x_test_bal = test_dataset_bal.data
+        y_test_bal = numpy.array(test_dataset_bal.labels)
+
+        # 提取不平衡测试集
+        x_test_imb = test_dataset_imb.data
+        y_test_imb = numpy.array(test_dataset_imb.labels)
+
+        # 类型转换与形状调整
+        if not Is_RGB:
+            if hasattr(x_test_bal, 'numpy'): x_test_bal = x_test_bal.numpy()
+            if hasattr(x_test_imb, 'numpy'): x_test_imb = x_test_imb.numpy()
+
+        x_train = x_train.astype(numpy.float32)
+        x_test_bal = x_test_bal.astype(numpy.float32)
+        x_test_imb = x_test_imb.astype(numpy.float32)
+
+        dim = x_train.ndim
+        if dim == 4:
+            shape = x_train.shape
+            # 如果通道在最后 (N, H, W, C)，转到中间 (N, C, H, W)
+            if shape[1] != 3 and shape[-1] in [1, 3]:
+                dims = list(range(dim))
+                dims[-1], dims[1] = dims[1], dims[-1]
+                x_train = x_train.transpose(dims)
+                x_test_bal = x_test_bal.transpose(dims)
+                x_test_imb = x_test_imb.transpose(dims)
+
+    elif Flag == 3:
+        # 自定义 Numpy 数据集
+        x_train_raw = x_train_raw.astype(numpy.float32)
+        x_test_raw = x_test_raw.astype(numpy.float32)
+        y_train_raw = y_train_raw.astype(numpy.int64)
+        y_test_raw = y_test_raw.astype(numpy.int64)
+
+        img_num_per_cls = ([400, 286, 205, 147, 105, 75, 54, 38, 27, 20]
+                   if opt.lt_mode == "exp"
+                   else [200, 158, 126, 100, 79, 63, 50, 40, 32, 20])
+
+        # 调用更新后的函数，返回 6 个值
+        x_train, y_train, x_test_bal, y_test_bal, x_test_imb, y_test_imb = imbalance_MRBand(
+            x_train_raw, y_train_raw, x_test_raw, y_test_raw,
+            img_num_per_cls,
+            imb_test_factor=0.1  # 设置不平衡因子，例如 0.1 (10:1)
+        )
+
+    elif Flag == 4:
+        # SVHN / EuroSAT
+        x_train_raw = x_train_raw.astype(numpy.float32)
+        x_test_raw = x_test_raw.astype(numpy.float32)
+        y_train_raw = y_train_raw.astype(numpy.int64)
+        y_test_raw = y_test_raw.astype(numpy.int64)
+
+        img_num_per_cls = ([400, 286, 205, 147, 105, 75, 54, 38, 27, 20]
+                   if opt.lt_mode == "exp"
+                   else [200, 158, 126, 100, 79, 63, 50, 40, 32, 20])
+
+        x_train, y_train, x_test_bal, y_test_bal, x_test_imb, y_test_imb = imbalance_MRBand(
+            x_train_raw, y_train_raw, x_test_raw, y_test_raw,
+            img_num_per_cls,
+            imb_test_factor=0.1
+        )
+
+        dim = x_train.ndim
+        if dim == 4:
+            shape = x_train.shape
+            if shape[1] != 3:
+                dims = list(range(dim))
+                dims[-1], dims[1] = dims[1], dims[-1]
+                x_train = x_train.transpose(dims)
+                x_test_bal = x_test_bal.transpose(dims)
+                x_test_imb = x_test_imb.transpose(dims)
+                print("jiaohuan")
+
+    else:
+        # Flag == 2 (STL-10)
+        # 提取数据
+        x_train = train_dataset.data
+        y_train = numpy.array(train_dataset.labels)
+
+        x_test_bal = test_dataset_bal.data
+        y_test_bal = numpy.array(test_dataset_bal.labels)
+
+        x_test_imb = test_dataset_imb.data
+        y_test_imb = numpy.array(test_dataset_imb.labels)
+
+        x_train = x_train.astype(numpy.float32)
+        x_test_bal = x_test_bal.astype(numpy.float32)
+        x_test_imb = x_test_imb.astype(numpy.float32)
+
+        dim = x_train.ndim
+        if dim == 4:
+            shape = x_train.shape
+            if shape[1] != 3:
+                dims = list(range(dim))
+                dims[-1], dims[1] = dims[1], dims[-1]
+                x_train = x_train.transpose(dims)
+                x_test_bal = x_test_bal.transpose(dims)
+                x_test_imb = x_test_imb.transpose(dims)
+
+        # STL-10 特有的下采样 (96x96 -> 48x48)
+        zoom_factors = (1, 1, 0.5, 0.5)
+        try:
+            x_train = zoom(x_train, zoom_factors, order=1)
+            x_test_bal = zoom(x_test_bal, zoom_factors, order=1)
+            x_test_imb = zoom(x_test_imb, zoom_factors, order=1)
+        except Exception as e:
+            print(f"Warning: Zoom failed for {dataset}. Error: {e}")
+
+    # 返回 7 个值
+    return x_train, y_train, x_test_bal, y_test_bal, x_test_imb, y_test_imb, Is_RGB
+
+
+
+
+group2_indices = [4, 5, 6]  # 中间三类
+group3_indices = [7, 8, 9]  # 尾部三类
+
+x_train,y_train,x_test,y_test, x_test_imb, y_test_imb,Is_RGB = create_dataset(opt.dataset)
+
+
+print(f"Training Set Shape: {x_train.shape}")
+print(f"Balanced Test Set Shape: {x_test.shape}")       # 原始均衡测试集 (例如 10000 张)
+print(f"Imbalanced Test Set Shape: {x_test_imb.shape}")     # 长尾测试集 (例如 ~5000 张)
+print(f"Imbalanced Test Set Shape: {y_test_imb.shape}")
+
+
+unique_labels = np.unique(y_train)
+num_unique_labels = len(unique_labels)
+total_instances = len(y_train)
+per_class_num = [np.sum(y_train == label) for label in unique_labels]
+class_ratios = [np.sum(y_train == label) / total_instances for label in unique_labels]
+
+class_reciprocals = [1 / num for num in per_class_num]
+sum_of_reciprocals = sum(class_reciprocals)
+
+# Parameters
+pop_size = opt.population
+generation = opt.generation
+cxProb = 0.8
+mutProb = 0.19
+elitismProb = 0.01
+totalRuns = 1
+initialMinDepth = 4
+initialMaxDepth = 15
+maxDepth = 15
+elitismProb = 0.01
+
+
+## GP
+
+def make_Sigma():
+    return random.randint(1, 4)
+
+
+def make_Order():
+    return random.randint(0, 3)
+
+
+def make_Theta():
+    return random.randint(0, 8)
+
+
+def make_Frequency():
+    return random.randint(0, 5)
+
+
+def make_n():
+    return round(random.random(), 3)
+
+
+def make_KernelSize():
+    return random.randrange(2, 5, 2)
+
+
+def make_classificationN():
+    return random.randint(1, 4)
+
+if Is_RGB:
+    pset = gp.PrimitiveSetTyped('MAIN', [Img, Img, Img], Vector1, prefix='Image')
+else:
+    pset = gp.PrimitiveSetTyped('MAIN', [Img], Vector1, prefix='Image')
+# image classification layer
+# pset.addPrimitive(fe_fs.classifier_selection, [Vector1, Int4], ClassLabel, name='classifier')
+
+# Feature concatenation
+pset.addPrimitive(fe_fs.root_con, [Vector1, Vector1], Vector1, name='Root')
+pset.addPrimitive(fe_fs.root_conVector2, [Img1, Img1], Vector1, name='Root2')
+pset.addPrimitive(fe_fs.root_conVector3, [Img1, Img1, Img1], Vector1, name='Root3')
+pset.addPrimitive(fe_fs.root_con, [Vector, Vector], Vector1, name='Roots2')
+pset.addPrimitive(fe_fs.root_con, [Vector, Vector, Vector], Vector1, name='Roots3')
+pset.addPrimitive(fe_fs.root_con, [Vector, Vector, Vector, Vector], Vector1, name='Roots4')
+
+# Feature extraction
+pset.addPrimitive(fe_fs.global_hog_small, [Img1], Vector, name='Global_HOG')
+pset.addPrimitive(fe_fs.all_lbp, [Img1], Vector, name='Global_uLBP')
+pset.addPrimitive(fe_fs.all_sift, [Img1], Vector, name='Global_SIFT')
+pset.addPrimitive(fe_fs.global_hog_small, [Img], Vector, name='FGlobal_HOG')
+pset.addPrimitive(fe_fs.all_lbp, [Img], Vector, name='FGlobal_uLBP')
+pset.addPrimitive(fe_fs.all_sift, [Img], Vector, name='FGlobal_SIFT')
+
+# Pooling
+pset.addPrimitive(fe_fs.maxP, [Img1, Int3, Int3], Img1, name='MaxPF')
+
+# Filtering (输入都是图片，输出也是图片，并且大小没有改变)
+pset.addPrimitive(fe_fs.gau, [Img1, Int1], Img1, name='GauF')
+pset.addPrimitive(fe_fs.gauD, [Img1, Int1, Int2, Int2], Img1, name='GauDF')
+pset.addPrimitive(fe_fs.gab, [Img1, Float1, Float2], Img1, name='GaborF')
+pset.addPrimitive(fe_fs.laplace, [Img1], Img1, name='LapF')
+pset.addPrimitive(fe_fs.gaussian_Laplace1, [Img1], Img1, name='LoG1F')
+pset.addPrimitive(fe_fs.gaussian_Laplace2, [Img1], Img1, name='LoG2F')
+pset.addPrimitive(fe_fs.sobelxy, [Img1], Img1, name='SobelF')
+pset.addPrimitive(fe_fs.sobelx, [Img1], Img1, name='SobelXF')
+pset.addPrimitive(fe_fs.sobely, [Img1], Img1, name='SobelYF')
+pset.addPrimitive(fe_fs.medianf, [Img1], Img1, name='MedF')
+pset.addPrimitive(fe_fs.meanf, [Img1], Img1, name='MeanF')
+pset.addPrimitive(fe_fs.minf, [Img1], Img1, name='MinF')
+pset.addPrimitive(fe_fs.maxf, [Img1], Img1, name='MaxF')
+pset.addPrimitive(fe_fs.lbp, [Img1], Img1, name='LBPF')
+pset.addPrimitive(fe_fs.hog_feature, [Img1], Img1, name='HoGF')
+pset.addPrimitive(fe_fs.sqrt, [Img1], Img1, name='SqrtF')
+pset.addPrimitive(fe_fs.relu, [Img1], Img1, name='ReLUF')
+
+# Pooling for Img
+pset.addPrimitive(fe_fs.maxP, [Img, Int3, Int3], Img1, name='MaxP')
+
+# Filtering for Img
+pset.addPrimitive(fe_fs.gau, [Img, Int1], Img, name='Gau')
+pset.addPrimitive(fe_fs.gauD, [Img, Int1, Int2, Int2], Img, name='GauD')
+pset.addPrimitive(fe_fs.gab, [Img, Float1, Float2], Img, name='Gabor')
+pset.addPrimitive(fe_fs.laplace, [Img], Img, name='Lap')
+pset.addPrimitive(fe_fs.gaussian_Laplace1, [Img], Img, name='LoG1')
+pset.addPrimitive(fe_fs.gaussian_Laplace2, [Img], Img, name='LoG2')
+pset.addPrimitive(fe_fs.sobelxy, [Img], Img, name='Sobel')
+pset.addPrimitive(fe_fs.sobelx, [Img], Img, name='SobelX')
+pset.addPrimitive(fe_fs.sobely, [Img], Img, name='SobelY')
+pset.addPrimitive(fe_fs.medianf, [Img], Img, name='Med')
+pset.addPrimitive(fe_fs.meanf, [Img], Img, name='Mean')
+pset.addPrimitive(fe_fs.minf, [Img], Img, name='Min')
+pset.addPrimitive(fe_fs.maxf, [Img], Img, name='Max')
+pset.addPrimitive(fe_fs.lbp, [Img], Img, name='LBP_F')
+pset.addPrimitive(fe_fs.hog_feature, [Img], Img, name='HOG_F')
+pset.addPrimitive(fe_fs.sqrt, [Img], Img, name='Sqrt')
+pset.addPrimitive(fe_fs.relu, [Img], Img, name='ReLU')
+
+# Terminals
+pset.renameArguments(ARG0='Image')
+
+pset.addEphemeralConstant('Singma', make_Sigma, Int1)
+pset.addEphemeralConstant('Order', make_Order, Int2)
+pset.addEphemeralConstant('Theta', make_Theta, Float1)
+pset.addEphemeralConstant('Frequency', make_Frequency, Float2)
+pset.addEphemeralConstant('n', make_n, Float3)
+pset.addEphemeralConstant('KernelSize', make_KernelSize, Int3)
+
+# pset.addEphemeralConstant('classificationN', lambda: random.randint(1, 4), Int4)
+
+# Creator definitions
+creator.create("FitnessMax", base.Fitness, weights=(1.0, 1.0, 1.0))
+creator.create("Individual", gp.PrimitiveTree, fitness=creator.FitnessMax)
+
+# Toolbox setup
+toolbox = base.Toolbox()
+toolbox.register("expr", gp_restrict.genHalfAndHalfMD, pset=pset, min_=initialMinDepth, max_=initialMaxDepth)
+toolbox.register("individual", tools.initIterate, creator.Individual, toolbox.expr)
+toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+toolbox.register("compile", gp.compile, pset=pset)
+toolbox.register("map", map)
+
+
+def evalTrain(individual):
+    # print("evalTrain..................................")
+    # print(individual)
+    try:
+        func = toolbox.compile(expr=individual)
+        train_tf = []
+        confusion_matrices = []
+        if Is_RGB:
+            for i in range(len(y_train)):
+                try:
+                    feature = func(x_train[i][0, :, :], x_train[i][1, :, :], x_train[i][2, :, :])
+                    if isinstance(feature, np.ndarray):
+                        feature = feature.flatten()
+                    train_tf.append(feature)
+                except Exception as e:
+                    # Handle any exceptions during feature extraction
+                    print(f"Error evaluating individual on training data at index {i}: {e}")
+                    return (0.0, 0.0, 0.0)  # Assign worst fitness if evaluation fails
+        else:
+            for i in range(len(y_train)):
+                try:
+                    feature = func(x_train[i][:, :])
+                    if isinstance(feature, np.ndarray):
+                        feature = feature.flatten()
+                    train_tf.append(feature)
+                except Exception as e:
+                    # Handle any exceptions during feature extraction
+                    print(f"Error evaluating individual on training data at index {i}: {e}")
+                    return (0.0, 0.0, 0.0)  # Assign worst fitness if evaluation fails
+        train_tf = np.array(train_tf, dtype=float)
+        min_max_scaler = preprocessing.MinMaxScaler()
+        train_tf = min_max_scaler.fit_transform(train_tf)
+        classifier = LinearSVC(max_iter=10000)
+        kfold = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+        for train_index, test_index in kfold.split(train_tf, y_train):
+            X_train_sub, X_test_sub = train_tf[train_index], train_tf[test_index]
+            y_train_sub, y_test_sub = y_train[train_index], y_train[test_index]
+            try:
+                #mlp.fit(X_train_sub, y_train_sub)
+                #y_pred = mlp.predict(X_test_sub)
+                # 训练模型
+                classifier.fit(X_train_sub, y_train_sub)
+                # 预测
+                y_pred = classifier.predict(X_test_sub)
+                cm = confusion_matrix(y_test_sub, y_pred, labels=unique_labels)
+                confusion_matrices.append(cm)
+            except Exception as e:
+                print(f"Error during classifier training/prediction: {e}")
+                return (0.0, 0.0, 0.0)
+        if not confusion_matrices:
+            return (0.0, 0.0, 0.0)
+        final_cm = np.sum(confusion_matrices, axis=0)
+        class_accuracies = []
+        total_true = []
+        total_instance_num = len(y_train)
+        for label in unique_labels:
+            true_positives = final_cm[label, label]
+            total_true.append(true_positives)
+            total_class_instances = final_cm[label, :].sum()
+            if total_class_instances == 0:
+                class_accuracy = 0.0
+            else:
+                class_accuracy = true_positives / total_class_instances
+            class_accuracies.append(class_accuracy)
+        accuracy_1 = sum([(1 / class_num) / sum_of_reciprocals * class_accuracie for class_num, class_accuracie in
+                          zip(per_class_num, class_accuracies)])
+        accuracy_2 = sum([acc / num_unique_labels for acc in class_accuracies])
+        accuracy_3 = sum([acc_num for acc_num in total_true]) / total_instance_num
+    except:
+        accuracy_1=0
+        accuracy_2=0
+        accuracy_3=0
+    print(accuracy_1, accuracy_2, accuracy_3)
+    return accuracy_1, accuracy_2, accuracy_3
+
+
+def parallel_evalTrain(individual):
+    return evalTrain(individual)
+
+
+# Register the evaluation function with caching
+toolbox.register("evaluate", parallel_evalTrain)
+toolbox.register("select", select_nsga.selNSGA2)
+toolbox.register("mate", gp.cxOnePoint)
+toolbox.register("expr_mut", gp_restrict.genFull, min_=0, max_=2)
+toolbox.register("mutate", gp.mutUniform, expr=toolbox.expr_mut, pset=pset)
+toolbox.decorate("mate", gp.staticLimit(key=operator.attrgetter("height"), max_value=maxDepth))
+toolbox.decorate("mutate", gp.staticLimit(key=operator.attrgetter("height"), max_value=maxDepth))
+
+
+def GPMain(pkl_file,randomSeeds):
+    random.seed(randomSeeds)
+    try:
+        with open("qwq.pkl", "rb") as cp_file:
+            checkpoint_data = pickle.load(cp_file)
+            print("已读取")
+            pop = checkpoint_data['population']
+            start_gen = checkpoint_data['generation'] + 1
+            print(f"Resuming from generation {start_gen}.")
+    except FileNotFoundError:
+        # 如果没有找到检查点，则初始化新种群
+        pop = toolbox.population(pop_size)
+        start_gen = 1
+    num_processes = opt.num_processes
+    with multiprocessing.Pool(processes=num_processes) as pool:
+        toolbox.register("map", pool.map)
+        pop = evalGP.eaSimple(pop, toolbox, cxProb, mutProb, generation, start_gen, pkl_file)
+        pool.close()
+        pool.join()
+    return pop
+
+
+from multiprocessing import Pool
+from functools import partial
+
+
+def test_individual_func(individual, toolbox, x_train, trainLabel, x_test, testLabel, Is_RGB):
+    """
+    评估单个个体在指定测试集上的表现
+    """
+    func = toolbox.compile(expr=individual)
+
+    train_tf = []
+    test_tf = []
+
+    # 提取训练集特征
+    if Is_RGB:
+        for i in range(len(trainLabel)):
+            train_tf.append(func(x_train[i][0, :, :], x_train[i][1, :, :], x_train[i][2, :, :]))
+        train_tf = np.asarray(train_tf, dtype=float)
+
+        # 提取测试集特征
+        for j in range(len(testLabel)):
+            test_tf.append(func(x_test[j][0, :, :], x_test[j][1, :, :], x_test[j][2, :, :]))
+        test_tf = np.asarray(test_tf, dtype=float)
+    else:
+        for i in range(len(trainLabel)):
+            train_tf.append(func(x_train[i][:, :]))
+        train_tf = np.asarray(train_tf, dtype=float)
+
+        for j in range(len(testLabel)):
+            test_tf.append(func(x_test[j][:, :]))
+        test_tf = np.asarray(test_tf, dtype=float)
+
+    # 归一化
+    min_max_scaler = preprocessing.MinMaxScaler()
+    train_norm = min_max_scaler.fit_transform(train_tf)
+    test_norm = min_max_scaler.transform(test_tf)
+
+    # 训练分类器
+    classifier = LinearSVC(max_iter=10000)
+    classifier.fit(train_norm, trainLabel)
+    probabilities = classifier.decision_function(test_norm)
+
+    # 归一化概率
+    if probabilities.size > 0:
+        prob_min = np.min(probabilities)
+        prob_max = np.max(probabilities)
+        if prob_max != prob_min:
+            probabilities = (probabilities - prob_min) / (prob_max - prob_min)
+        else:
+            probabilities = np.zeros_like(probabilities)
+
+    # 确保是2D数组
+    if probabilities.ndim == 1:
+        probabilities = probabilities.reshape(-1, 1)
+
+    return probabilities
+
+
+def evalTest(toolbox, hof, x_train, trainLabel, x_test, testLabel, x_test_imb, y_test_imb, Is_RGB):
+    """
+    多树集成架构：在平衡测试集和不平衡测试集上分别评估模型。
+
+    参数:
+        toolbox: GP工具盒
+        hof: 最佳个体列表（Hall of Fame）
+        x_train, trainLabel: 训练集
+        x_test, testLabel: 平衡测试集
+        x_test_imb, y_test_imb: 不平衡测试集
+        Is_RGB: RGB图像标志
+
+    返回:
+        14个指标 (平衡集 7 个 + 不平衡集 7 个)
+    """
+    print("开始评估集成模型（平衡集 + 不平衡集）...")
+
+
+    # 确定类别数量
+    all_labels = np.concatenate((trainLabel, testLabel, y_test_imb))
+    num_unique_labels = len(np.unique(all_labels))
+
+    # ========== 1. 定义辅助函数 ==========
+    def create_toolbox():
+        """为每个进程创建独立的toolbox"""
+        local_toolbox = base.Toolbox()
+        local_toolbox.register("compile", gp.compile, pset=pset)
+        local_toolbox.register("mate", gp.cxOnePoint)
+        local_toolbox.register("mutate", gp.mutUniform, expr=toolbox.expr_mut, pset=pset)
+        return local_toolbox
+
+    def evaluate_on_testset(test_data, test_labels, set_name):
+        """在单个测试集上评估集成模型"""
+        print(f"正在评估 {set_name}...")
+
+        # 初始化概率累加器
+        all_probabilities = np.zeros((len(test_labels), num_unique_labels))
+
+        # 准备并行评估函数
+        test_func = partial(
+            test_individual_func,
+            toolbox=create_toolbox(),
+            x_train=x_train,
+            trainLabel=trainLabel,
+            x_test=test_data,
+            testLabel=test_labels,
+            Is_RGB=Is_RGB
+        )
+
+        # 并行评估所有个体
+        with Pool(processes=opt.num_processes) as p:
+            results = p.map(test_func, hof)
+
+        # 累加所有个体的预测概率
+        for probabilities in results:
+            # 确保维度匹配
+            if probabilities.shape[1] < num_unique_labels:
+                # 如果预测类别数少于实际类别数，进行填充
+                padded = np.zeros((probabilities.shape[0], num_unique_labels))
+                padded[:, :probabilities.shape[1]] = probabilities
+                probabilities = padded
+            all_probabilities += probabilities
+
+        # 集成投票（累加后取平均）
+        all_probabilities = all_probabilities / len(hof) if len(hof) > 0 else all_probabilities
+
+        # ========== 2. 计算评估指标 ==========
+        # 分组定义
+        group1_indices = [0, 1, 2, 3]  # 前四类
+        group2_indices = [4, 5, 6]  # 中间三类
+        group3_indices = [7, 8, 9]  # 后三类
+
+        def calculate_group_accuracy(predictions, true_labels, group_indices):
+            """计算分组准确率"""
+            mask = np.isin(true_labels, group_indices)
+            if not np.any(mask):
+                return 0.0
+            filtered_true_labels = true_labels[mask]
+            filtered_predictions = predictions[mask]
+            return accuracy_score(filtered_true_labels, filtered_predictions)
+
+        # 最终预测
+        final_predictions = np.argmax(all_probabilities, axis=1)
+        test_labels_np = np.asarray(test_labels)
+
+        # Top-1 Accuracy
+        top1_accuracy = np.mean(final_predictions == test_labels_np)
+
+        # Top-5 Accuracy
+        if all_probabilities.shape[1] >= 5:
+            top5_indices = np.argsort(all_probabilities, axis=1)[:, -5:]
+            top5_matches = np.any(top5_indices == test_labels_np[:, None], axis=1)
+            top5_accuracy = np.mean(top5_matches)
+        else:
+            top5_accuracy = top1_accuracy
+
+        # 分组准确率
+        accuracy_group1 = calculate_group_accuracy(final_predictions, test_labels_np, group1_indices)
+        accuracy_group2 = calculate_group_accuracy(final_predictions, test_labels_np, group2_indices)
+        accuracy_group3 = calculate_group_accuracy(final_predictions, test_labels_np, group3_indices)
+
+        # 分类报告
+        final_report = classification_report(test_labels_np, final_predictions, zero_division=0)
+
+        # Macro F1 Score
+        macro_f1 = f1_score(test_labels_np, final_predictions, average='macro', zero_division=0)
+
+        # Mean Per-Class Accuracy
+        per_class_accs = []
+        for c in range(num_unique_labels):
+            mask = (test_labels_np == c)
+            if np.any(mask):
+                acc = np.mean(final_predictions[mask] == test_labels_np[mask])
+                per_class_accs.append(acc)
+            else:
+                per_class_accs.append(0.0)
+        mean_per_class_acc = np.mean(per_class_accs) if per_class_accs else 0.0
+
+        # 返回9个指标（保持与原始evalTest结构一致，但增加了额外指标）
+        return (
+            final_predictions,
+            final_report,
+            round(100 * top1_accuracy, 2),
+            round(100 * top5_accuracy, 2),
+            round(100 * accuracy_group1, 2),
+            round(100 * accuracy_group2, 2),
+            round(100 * accuracy_group3, 2),
+            round(100 * mean_per_class_acc, 2),
+            round(100 * macro_f1, 2)
+        )
+
+    # ========== 3. 在两个测试集上分别评估 ==========
+
+    # 平衡测试集评估
+    (bal_preds, bal_report, bal_top1, bal_top5,
+     bal_g1, bal_g2, bal_g3, bal_macro_acc, bal_macro_f1) = evaluate_on_testset(
+        x_test, testLabel, "Balanced Test Set"
+    )
+
+    # 不平衡测试集评估 (可通过 --disable_imb_test 关闭)
+    if opt.disable_imb_test:
+        (imb_preds, imb_report, imb_top1, imb_top5,
+         imb_g1, imb_g2, imb_g3, imb_macro_acc, imb_macro_f1) = (
+            None, "Disabled by --disable_imb_test", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        )
+    else:
+        (imb_preds, imb_report, imb_top1, imb_top5,
+         imb_g1, imb_g2, imb_g3, imb_macro_acc, imb_macro_f1) = evaluate_on_testset(
+            x_test_imb, y_test_imb, "Imbalanced Test Set"
+        )
+
+    # ========== 4. 返回所有结果（18个值） ==========
+    return (
+        # 平衡测试集结果（9个）
+        bal_preds, bal_report, bal_top1, bal_top5,
+        bal_g1, bal_g2, bal_g3, bal_macro_acc, bal_macro_f1,
+        # 不平衡测试集结果（9个）
+        imb_preds, imb_report, imb_top1, imb_top5,
+        imb_g1, imb_g2, imb_g3, imb_macro_acc, imb_macro_f1
+    )
+
+
+
+if __name__ == "__main__":
+    sys.stdout = Logger(opt.log_file, stream=sys.stdout, add_flag=True, encoding='utf-8')
+    beginTime = time.perf_counter()
+    pop = GPMain(opt.pkl_file,opt.randomSeeds)
+
+
+
+    endTime = time.perf_counter()
+    trainTime = endTime - beginTime
+    results = evalTest(toolbox, pop, x_train, y_train, x_test, y_test, x_test_imb, y_test_imb, Is_RGB)
+
+
+    testTime = time.perf_counter() - endTime
+
+    (
+        bal_preds, bal_report, bal_top1, bal_top5, bal_g1, bal_g2, bal_g3, bal_macro_acc, bal_macro_f1,
+        imb_preds, imb_report, imb_top1, imb_top5, imb_g1, imb_g2, imb_g3, imb_macro_acc, imb_macro_f1
+    ) = results
+
+    # 3. 打印第一组：平衡测试集 (Balanced Test Set)
+    print("=" * 50)
+    print(">>> Evaluation on BALANCED Test Set")
+    print("=" * 50)
+    print('Final Classification Report:\n', bal_report)
+    print(f'Top1 Accuracy: {bal_top1:.2f}')
+    print(f'Top5 Accuracy: {bal_top5:.2f}')
+    print(f'accuracy_group1: {bal_g1:.2f}')
+    print(f'accuracy_group2: {bal_g2:.2f}')
+    print(f'accuracy_group3: {bal_g3:.2f}')
+    # 注意：原代码中的 Macro_Recall 对应的是 mean_per_class_acc (Macro Accuracy)
+    print(f'Macro_Recall: {bal_macro_acc:.2f}')
+    print(f'macro_f1: {bal_macro_f1:.2f}')
+
+    # 4. 打印第二组：不平衡测试集 (Imbalanced/Long-tail Test Set)
+    if not opt.disable_imb_test:
+        print("\n" + "=" * 50)
+        print(">>> Evaluation on IMBALANCED Test Set (Long-tail)")
+        print("=" * 50)
+        print('Final Classification Report:\n', imb_report)
+        print(f'Top1 Accuracy: {imb_top1:.2f}')
+        print(f'Top5 Accuracy: {imb_top5:.2f}')
+        print(f'accuracy_group1: {imb_g1:.2f}')
+        print(f'accuracy_group2: {imb_g2:.2f}')
+        print(f'accuracy_group3: {imb_g3:.2f}')
+        print(f'Macro_Recall: {imb_macro_acc:.2f}')
+        print(f'macro_f1: {imb_macro_f1:.2f}')
+    else:
+        print("\n[Info] Imbalanced test set evaluation disabled by --disable_imb_test")
+    print("Process Finish")
+
+
+
+    # sys.stdout=Logger(opt.log_file,sys.stdout)
+    # start_time = time.time()
+    # print("Starting GP Evolution...")
+    # pop = GPMain(opt.pkl_file)
+    # endTime = time.process_time()
+    # elapsed_time = time.time() - start_time
+    # print(f"GP Evolution completed in {elapsed_time:.2f} seconds.")
+    # final_predictions, final_report, top1_accuracy, top5_accuracy, accuracy_group1, accuracy_group2, accuracy_group3 = evalTest(
+    #     toolbox, pop, x_train, y_train, x_test, y_test
+    # )
+    #
+    # print('Final Classification Report:\n', final_report)
+    # print('Top1 Accuracy:', top1_accuracy)
+    # print('Top5 Accuracy:', top5_accuracy)
+    # print('accuracy_group1:', accuracy_group1)
+    # print('accuracy_group2:', accuracy_group2)
+    # print('accuracy_group3:', accuracy_group3)
+    # print('End')
