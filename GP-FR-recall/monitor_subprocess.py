@@ -337,10 +337,29 @@ def main():
                 time.sleep(max(0.0, next_tick - time.time()))
 
         except KeyboardInterrupt:
+            # Ctrl+C: 连同 multiprocessing 池在内的所有子孙进程一起结束
+            # (Windows 上 proc.terminate() 只杀直接子进程，池的 worker 会残留)
             try:
-                proc.terminate()
-            except Exception:
-                pass
+                root = psutil.Process(proc.pid)
+                victims = root.children(recursive=True) + [root]
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                victims = []
+            for p in reversed(victims):
+                try:
+                    p.terminate()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            try:
+                _, alive = psutil.wait_procs(victims, timeout=3)
+            except KeyboardInterrupt:
+                alive = victims
+            for p in alive:
+                try:
+                    p.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            print("[ABORT] Ctrl+C: terminated all processes.", file=sys.stderr)
+            sys.exit(130)
 
     peak_total_rss_mb = round(peak_total_rss / MB, 2)
     print("监控结束。峰值 TOTAL RSS（MiB）:", peak_total_rss_mb)

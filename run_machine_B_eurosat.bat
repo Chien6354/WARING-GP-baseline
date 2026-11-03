@@ -10,16 +10,38 @@ set "PYTHON_EXE=D:\software\Anaconda\envs\GP\python.exe"
 
 :: ---------------- SLGP-LT-new (EuroSAT) ----------------
 pushd "%~dp0SLGP-LT-new"
+call :clean_task "EuroSAT-LT-400"
 call :run_task "EuroSAT" "EuroSAT-LT-400" "exp"
+if "!errorlevel!"=="130" goto :abort
 popd
 
 :: ---------------- FGP (EuroSAT) ----------------
 pushd "%~dp0FGP"
+call :clean_task "EuroSAT-LT-400"
 call :run_task "EuroSAT" "EuroSAT-LT-400" "exp"
+if "!errorlevel!"=="130" goto :abort
 popd
 
 echo.
 echo [ALL DONE - Machine B EuroSAT]
+exit /b 0
+
+:abort
+echo.
+echo [ABORT] Ctrl+C detected, all runs stopped.
+exit /b 130
+
+:: ======================================================================
+::  clean_task  <output-dir-label>
+::  Deletes log/pkl/csv of the given label inside the current folder.
+:: ======================================================================
+:clean_task
+set "LABEL=%~1"
+:: 只删 run_machine_B.bat 产出的 EuroSAT 结果目录（log/pkl/csv 下的 EuroSAT-LT-400）
+if exist "log\!LABEL!" rd /s /q "log\!LABEL!"
+if exist "pkl\!LABEL!" rd /s /q "pkl\!LABEL!"
+if exist "csv\!LABEL!" rd /s /q "csv\!LABEL!"
+echo [Clean] removed !LABEL! output in %CD%
 exit /b 0
 
 :: ======================================================================
@@ -47,6 +69,10 @@ for /l %%i in (1,1,30) do (
         echo [Start/Resume] !DATASET! seed %%i ...
         "%PYTHON_EXE%" monitor_subprocess.py --save "!CSVFILE!" --include-children "%PYTHON_EXE%" main.py --log_file "!LOGFILE!" --pkl_file "!PKLFILE!" --dataset !DATASET! --randomSeeds %%i --lt_mode !LTMODE! --disable_imb_test --population 100 --generation 50 --num_processes 10
 
+        if !errorlevel! equ 130 (
+            echo [ABORT] Ctrl+C detected, stopping remaining runs.
+            exit /b 130
+        )
         if !errorlevel! equ 0 (
             echo [Success] !DATASET! seed %%i finished.
             echo. > "!DONEFILE!"

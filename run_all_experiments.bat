@@ -23,6 +23,7 @@ echo  Task 1: 6 methods x cifar10 (exp LT: head=400, tail=20)
 echo ============================================================
 for %%P in (FGP GP-FR GP-FR-recall MEGPE_contrast SLGP-LT-new dtgpn) do (
     call :run_config "%%P" "cifar10" "CIFAR10-LT-400" "--lt_mode exp --disable_imb_test --population 100 --generation 50 --num_processes 10"
+    if "!errorlevel!"=="130" goto :abort
 )
 
 echo ============================================================
@@ -31,6 +32,7 @@ echo ============================================================
 for %%R in (0.25 0.75) do (
     set "SUF=!map_%%R!"
     call :run_config "SLGP-LT-new" "cifar10" "CIFAR10-LT-200-switch!SUF!" "--switch_ratio %%R --disable_imb_test --population 100 --generation 50 --num_processes 10"
+    if "!errorlevel!"=="130" goto :abort
 )
 
 echo ============================================================
@@ -38,7 +40,9 @@ echo  Task 3: 3 methods x fashion_mnist + MRD (original LT)
 echo ============================================================
 for %%P in (SLGP-LT-new dtgpn GP-FR-recall) do (
     call :run_config "%%P" "fashion_mnist" "Fashion-MNIST-LT-200" "--disable_imb_test --population 100 --generation 50 --num_processes 10"
+    if "!errorlevel!"=="130" goto :abort
     call :run_config "%%P" "MRD" "MRD-LT-200" "--disable_imb_test --population 100 --generation 50 --num_processes 10"
+    if "!errorlevel!"=="130" goto :abort
 )
 
 echo ============================================================
@@ -47,6 +51,11 @@ echo ============================================================
 endlocal
 pause
 goto :eof
+
+:abort
+echo.
+echo [ABORT] Ctrl+C detected, all runs stopped.
+exit /b 130
 
 :: ------------------------------------------------------------
 :: ?????: ????????????????? (????? x ????) ?? 30 ?? seed
@@ -89,6 +98,10 @@ for /l %%i in (1,1,10) do (
 
         "%PYTHON_EXE%" monitor_subprocess.py --save "!CSVFILE!" --include-children "%PYTHON_EXE%" main.py --log_file "!LOGFILE!" --pkl_file "!PKLFILE!" --dataset %DS% --randomSeeds %%i %EXTRA%
 
+        if !errorlevel! equ 130 (
+            echo [ABORT] Ctrl+C detected, stopping remaining runs.
+            exit /b 130
+        )
         if !errorlevel! equ 0 (
             echo [Success] %PROJ% %DS% run %%i finished.
             echo. > "!DONEFILE!"

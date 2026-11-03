@@ -2,11 +2,11 @@
 setlocal enabledelayedexpansion
 
 :: ============================================================
-:: ·Ö²¼Ê½ÊµÑé½Å±¾ [µçÄÔ 1/3]
-::   ÈÎÎñ1(²¿·Ö): FGP / GP-FR / GP-FR-recall x cifar10 (exp ³¤Î²)
-::   ÈÎÎñ3(²¿·Ö): SLGP-LT-new / dtgpn / GP-FR-recall x fashion_mnist
-::   Ã¿×é 10 ¸ö seed: 1-10; ¶ÏµãÐøÅÜ (.done)
-::   ×¢Òâ: Õû¸ö WARING-GP-baseline Ä¿Â¼(º¬ datasets)¿É·Å±¾»úÈÎÒâÂ·¾¶, ½Å±¾×Ô¶¯¶¨Î»
+:: åˆ†å¸ƒå¼å®žéªŒè„šæœ¬ [ç”µè„‘ 1/3]
+::   ä»»åŠ¡1(éƒ¨åˆ†): FGP / GP-FR / GP-FR-recall x cifar10 (exp é•¿å°¾)
+::   ä»»åŠ¡3(éƒ¨åˆ†): SLGP-LT-new / dtgpn / GP-FR-recall x fashion_mnist
+::   æ¯ç»„ 10 ä¸ª seed: 1-10; æ–­ç‚¹ç»­è·‘ (.done)
+::   æ³¨æ„: æ•´ä¸ª WARING-GP-baseline ç›®å½•(å« datasets)å¯æ”¾æœ¬æœºä»»æ„è·¯å¾„, è„šæœ¬è‡ªåŠ¨å®šä½
 :: ============================================================
 
 set "PYTHON_EXE=D:\software\Anaconda\envs\GP\python.exe"
@@ -17,6 +17,7 @@ echo  [PC1] Task 1 (part): FGP, GP-FR, GP-FR-recall x cifar10 (exp LT)
 echo ============================================================
 for %%P in (FGP GP-FR GP-FR-recall) do (
     call :run_config "%%P" "cifar10" "CIFAR10-LT-400" "--lt_mode exp --disable_imb_test --population 100 --generation 50 --num_processes 10"
+    if "!errorlevel!"=="130" goto :abort
 )
 
 echo ============================================================
@@ -24,6 +25,7 @@ echo  [PC1] Task 3 (part): 3 methods x fashion_mnist
 echo ============================================================
 for %%P in (SLGP-LT-new dtgpn GP-FR-recall) do (
     call :run_config "%%P" "fashion_mnist" "Fashion-MNIST-LT-200" "--disable_imb_test --population 100 --generation 50 --num_processes 10"
+    if "!errorlevel!"=="130" goto :abort
 )
 
 echo ============================================================
@@ -33,9 +35,14 @@ endlocal
 pause
 goto :eof
 
+:abort
+echo.
+echo [ABORT] Ctrl+C detected, all runs stopped.
+exit /b 130
+
 :: ------------------------------------------------------------
-:: ×Ó¹ý³Ì: ÔÚÖ¸¶¨ÏîÄ¿Ä¿Â¼ÏÂÅÜÒ»¸ö (Êý¾Ý¼¯ x ÅäÖÃ) µÄ 10 ¸ö seed
-::   %1 = ÏîÄ¿Ä¿Â¼Ãû   %2 = Êý¾Ý¼¯Ãû   %3 = Êä³ö×ÓÄ¿Â¼Ãû   %4 = ¶îÍâ²ÎÊý(¿ÉÎª¿Õ)
+:: å­è¿‡ç¨‹: åœ¨æŒ‡å®šé¡¹ç›®ç›®å½•ä¸‹è·‘ä¸€ä¸ª (æ•°æ®é›† x é…ç½®) çš„ 10 ä¸ª seed
+::   %1 = é¡¹ç›®ç›®å½•å   %2 = æ•°æ®é›†å   %3 = è¾“å‡ºå­ç›®å½•å   %4 = é¢å¤–å‚æ•°(å¯ä¸ºç©º)
 :: ------------------------------------------------------------
 :run_config
 set "PROJ=%~1"
@@ -74,6 +81,10 @@ for /l %%i in (1,1,10) do (
 
         "%PYTHON_EXE%" monitor_subprocess.py --save "!CSVFILE!" --include-children "%PYTHON_EXE%" main.py --log_file "!LOGFILE!" --pkl_file "!PKLFILE!" --dataset %DS% --randomSeeds %%i %EXTRA%
 
+        if !errorlevel! equ 130 (
+            echo [ABORT] Ctrl+C detected, stopping remaining runs.
+            exit /b 130
+        )
         if !errorlevel! equ 0 (
             echo [Success] %PROJ% %DS% run %%i finished.
             echo. > "!DONEFILE!"

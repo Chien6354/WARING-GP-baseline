@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 :: ============================================================
-:: e???????: §³???????????????????? (?????????????????)
+:: e???????: å¦Š???????????????????? (?????????????????)
 ::   ???: ?? seed=1, population=10, num_processes=10
 ::   ????: SLGP-LT-new=6 (??????????), ??????=3
 ::   ????????? TEST- ??, ???????????, ?????????????
@@ -21,8 +21,10 @@ echo ============================================================
 for %%P in (SLGP-LT-new dtgpn FGP GP-FR GP-FR-recall MEGPE_contrast) do (
     if "%%P"=="SLGP-LT-new" (
         call :run_config "%%P" "cifar10" "TEST-CIFAR10-LT-400" "--lt_mode exp --disable_imb_test --population 10 --generation 6 --num_processes 10"
+        if "!errorlevel!"=="130" goto :abort
     ) else (
         call :run_config "%%P" "cifar10" "TEST-CIFAR10-LT-400" "--lt_mode exp --disable_imb_test --population 10 --generation 3 --num_processes 10"
+        if "!errorlevel!"=="130" goto :abort
     )
 )
 
@@ -32,6 +34,7 @@ echo ============================================================
 for %%R in (0.25 0.5 0.75) do (
     set "SUF=!map_%%R!"
     call :run_config "SLGP-LT-new" "cifar10" "TEST-CIFAR10-LT-200-switch!SUF!" "--switch_ratio %%R --disable_imb_test --population 10 --generation 6 --num_processes 10"
+    if "!errorlevel!"=="130" goto :abort
 )
 
 echo ============================================================
@@ -40,10 +43,14 @@ echo ============================================================
 for %%P in (SLGP-LT-new dtgpn GP-FR-recall) do (
     if "%%P"=="SLGP-LT-new" (
         call :run_config "%%P" "fashion_mnist" "TEST-Fashion-MNIST-LT-200" "--disable_imb_test --population 10 --generation 6 --num_processes 10"
+        if "!errorlevel!"=="130" goto :abort
         call :run_config "%%P" "MRD" "TEST-MRD-LT-200" "--disable_imb_test --population 10 --generation 6 --num_processes 10"
+        if "!errorlevel!"=="130" goto :abort
     ) else (
         call :run_config "%%P" "fashion_mnist" "TEST-Fashion-MNIST-LT-200" "--disable_imb_test --population 10 --generation 3 --num_processes 10"
+        if "!errorlevel!"=="130" goto :abort
         call :run_config "%%P" "MRD" "TEST-MRD-LT-200" "--disable_imb_test --population 10 --generation 3 --num_processes 10"
+        if "!errorlevel!"=="130" goto :abort
     )
 )
 
@@ -53,6 +60,11 @@ echo ============================================================
 endlocal
 pause
 goto :eof
+
+:abort
+echo.
+echo [ABORT] Ctrl+C detected, all runs stopped.
+exit /b 130
 
 :: ------------------------------------------------------------
 :: ?????: ???????????, ????? seed=1
@@ -87,6 +99,10 @@ if exist "%DONEFILE%" (
 ) else (
     echo [Start] %PROJ% %DS% test run, seed=1 ...
     "%PYTHON_EXE%" monitor_subprocess.py --save "%CSVFILE%" --include-children "%PYTHON_EXE%" main.py --log_file "%LOGFILE%" --pkl_file "%PKLFILE%" --dataset %DS% --randomSeeds 1 %EXTRA%
+    if !errorlevel! equ 130 (
+        echo [ABORT] Ctrl+C detected, stopping remaining runs.
+        exit /b 130
+    )
     if !errorlevel! equ 0 (
         echo [Success] %PROJ% %DS% test run finished.
         echo. > "%DONEFILE%"

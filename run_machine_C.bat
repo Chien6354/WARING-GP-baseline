@@ -12,17 +12,25 @@ set "PYTHON_EXE=D:\software\miniconda\envs\FlexGP\python.exe"
 :: ---------------- GP-FR-recall ----------------
 pushd "%~dp0GP-FR-recall"
 call :run_task "mnist" "MNIST-LT-200" "fixed"
+if "!errorlevel!"=="130" goto :abort
 call :run_task "EuroSAT" "EuroSAT-LT-400" "exp"
+if "!errorlevel!"=="130" goto :abort
 popd
 
 :: ---------------- GP-FR ----------------
 pushd "%~dp0GP-FR"
 call :run_task "EuroSAT" "EuroSAT-LT-400" "exp"
+if "!errorlevel!"=="130" goto :abort
 popd
 
 echo.
 echo [ALL DONE - Machine C]
 exit /b 0
+
+:abort
+echo.
+echo [ABORT] Ctrl+C detected, all runs stopped.
+exit /b 130
 
 :: ======================================================================
 ::  run_task  <dataset-token>  <output-dir-label>  <lt_mode>
@@ -49,6 +57,10 @@ for /l %%i in (1,1,30) do (
         echo [Start/Resume] !DATASET! seed %%i ...
         "%PYTHON_EXE%" monitor_subprocess.py --save "!CSVFILE!" --include-children "%PYTHON_EXE%" main.py --log_file "!LOGFILE!" --pkl_file "!PKLFILE!" --dataset !DATASET! --randomSeeds %%i --lt_mode !LTMODE! --disable_imb_test --population 100 --generation 50 --num_processes 10
 
+        if !errorlevel! equ 130 (
+            echo [ABORT] Ctrl+C detected, stopping remaining runs.
+            exit /b 130
+        )
         if !errorlevel! equ 0 (
             echo [Success] !DATASET! seed %%i finished.
             echo. > "!DONEFILE!"
