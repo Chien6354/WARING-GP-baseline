@@ -10,14 +10,12 @@ set "PYTHON_EXE=D:\software\Anaconda\envs\GP\python.exe"
 
 :: ---------------- SLGP-LT-new (EuroSAT) ----------------
 pushd "%~dp0SLGP-LT-new"
-call :clean_task "EuroSAT-LT-400"
 call :run_task "EuroSAT" "EuroSAT-LT-400" "exp"
 if "!errorlevel!"=="130" goto :abort
 popd
 
 :: ---------------- FGP (EuroSAT) ----------------
 pushd "%~dp0FGP"
-call :clean_task "EuroSAT-LT-400"
 call :run_task "EuroSAT" "EuroSAT-LT-400" "exp"
 if "!errorlevel!"=="130" goto :abort
 popd
@@ -30,19 +28,6 @@ exit /b 0
 echo.
 echo [ABORT] Ctrl+C detected, all runs stopped.
 exit /b 130
-
-:: ======================================================================
-::  clean_task  <output-dir-label>
-::  Deletes log/pkl/csv of the given label inside the current folder.
-:: ======================================================================
-:clean_task
-set "LABEL=%~1"
-:: 只删 run_machine_B.bat 产出的 EuroSAT 结果目录（log/pkl/csv 下的 EuroSAT-LT-400）
-if exist "log\!LABEL!" rd /s /q "log\!LABEL!"
-if exist "pkl\!LABEL!" rd /s /q "pkl\!LABEL!"
-if exist "csv\!LABEL!" rd /s /q "csv\!LABEL!"
-echo [Clean] removed !LABEL! output in %CD%
-exit /b 0
 
 :: ======================================================================
 ::  run_task  <dataset-token>  <output-dir-label>  <lt_mode>

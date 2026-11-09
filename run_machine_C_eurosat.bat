@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 :: ======================================================================
-::  Machine C - EuroSAT clean + rerun (standalone script)
+::  Machine C - EuroSAT rerun (standalone script)
 ::  Place this file in the project root (same dir as GP-FR-recall, GP-FR).
 ::  EDIT PYTHON_EXE below if your env path differs.
 :: ======================================================================
@@ -10,14 +10,12 @@ set "PYTHON_EXE=D:\software\miniconda\envs\FlexGP\python.exe"
 
 :: ---------------- GP-FR-recall (EuroSAT) ----------------
 pushd "%~dp0GP-FR-recall"
-call :clean_task "EuroSAT-LT-400"
 call :run_task "EuroSAT" "EuroSAT-LT-400" "exp"
 if "!errorlevel!"=="130" goto :abort
 popd
 
 :: ---------------- GP-FR (EuroSAT) ----------------
 pushd "%~dp0GP-FR"
-call :clean_task "EuroSAT-LT-400"
 call :run_task "EuroSAT" "EuroSAT-LT-400" "exp"
 if "!errorlevel!"=="130" goto :abort
 popd
@@ -30,19 +28,6 @@ exit /b 0
 echo.
 echo [ABORT] Ctrl+C detected, all runs stopped.
 exit /b 130
-
-:: ======================================================================
-::  clean_task  <output-dir-label>
-::  Deletes log/pkl/csv of the given label inside the current folder.
-:: ======================================================================
-:clean_task
-set "LABEL=%~1"
-:: 只删 run_machine_C.bat 产出的 EuroSAT 结果目录（log/pkl/csv 下的 EuroSAT-LT-400）
-if exist "log\!LABEL!" rd /s /q "log\!LABEL!"
-if exist "pkl\!LABEL!" rd /s /q "pkl\!LABEL!"
-if exist "csv\!LABEL!" rd /s /q "csv\!LABEL!"
-echo [Clean] removed !LABEL! output in %CD%
-exit /b 0
 
 :: ======================================================================
 ::  run_task  <dataset-token>  <output-dir-label>  <lt_mode>
