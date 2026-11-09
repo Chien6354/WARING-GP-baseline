@@ -53,7 +53,7 @@ parser.add_argument(
     "--dataset",
     help="Dataset name (choose from the provided options)",
     type=str,
-    choices=["mnist", "cifar10", "fashion_mnist", "STL", "MBI", "MRB", "MRD", "SVHN", "EuroSAT"],  # 限制可选值
+    choices=["mnist", "cifar10", "fashion_mnist", "STL", "MBI", "MRB", "MRD", "SVHN", "EuroSAT", "CarDD"],  # 限制可选值
     default="mnist"  # 设置默认值
 )
 
@@ -210,6 +210,17 @@ def create_dataset(dataset):
         Is_RGB = True
         Flag = 4
 
+    elif dataset == "CarDD":
+        # CarDD: 6 类, 使用原始类别分布, 不做长尾采样
+        npy_root = DATASETS_ROOT
+        x_train_raw = numpy.load(npy_root + '/' + dataset + '/' + dataset + '_train_data.npy') / 255.0
+        y_train_raw = numpy.load(npy_root + '/' + dataset + '/' + dataset + '_train_label.npy')
+        x_test_raw = numpy.load(npy_root + '/' + dataset + '/' + dataset + '_test_data.npy') / 255.0
+        y_test_raw = numpy.load(npy_root + '/' + dataset + '/' + dataset + '_test_label.npy')
+
+        Is_RGB = True
+        Flag = 5
+
     else:
         if dataset == "mnist":
             train_dataset = IMBALANCEMNIST("train", imbalance_ratio=100, root=os.path.join(DATASETS_ROOT, 'MNIST'))
@@ -307,6 +318,26 @@ def create_dataset(dataset):
                 x_test_bal = x_test_bal.transpose(dims)
                 x_test_imb = x_test_imb.transpose(dims)
                 print("jiaohuan")
+
+    elif Flag == 5:
+        # CarDD: 原始类别分布 (不构造长尾), 不平衡测试集与平衡测试集一致
+        x_train = x_train_raw.astype(numpy.float32)
+        x_test_bal = x_test_raw.astype(numpy.float32)
+        y_train = y_train_raw.astype(numpy.int64)
+        y_test_bal = y_test_raw.astype(numpy.int64)
+
+        dim = x_train.ndim
+        if dim == 4:
+            shape = x_train.shape
+            if shape[1] != 3:
+                dims = list(range(dim))
+                dims[-1], dims[1] = dims[1], dims[-1]
+                x_train = x_train.transpose(dims)
+                x_test_bal = x_test_bal.transpose(dims)
+                print("jiaohuan")
+
+        x_test_imb = x_test_bal
+        y_test_imb = y_test_bal
 
     else:
         # Flag == 2 (STL-10)

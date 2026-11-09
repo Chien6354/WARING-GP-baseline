@@ -293,9 +293,15 @@ def test_task1(ind0, ind1, toolbox, dataSet, x_train, y_train, x_test, y_test, x
             top5_accuracy = top1_accuracy
 
         # C. Group Accuracy (分组准确率)
-        group1_indices = [0, 1, 2]  # 前三类
-        group2_indices = [3, 4, 5]  # 中间三类
-        group3_indices = [6, 7, 8, 9]  # 后四类
+        # 6 类数据集 (如 CarDD) 每两类一组; 其余沿用原来的 3/3/4 划分
+        if int(np.max(np.concatenate((y_train, test_labels_np)))) + 1 <= 6:
+            group1_indices = [0, 1]
+            group2_indices = [2, 3]
+            group3_indices = [4, 5]
+        else:
+            group1_indices = [0, 1, 2]  # 前三类
+            group2_indices = [3, 4, 5]  # 中间三类
+            group3_indices = [6, 7, 8, 9]  # 后四类
 
         def calculate_group_accuracy(preds, labels, group):
             mask = np.isin(labels, group)

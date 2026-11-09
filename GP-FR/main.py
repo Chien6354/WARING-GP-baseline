@@ -44,7 +44,7 @@ parser.add_argument(
     "--dataset",
     help="Dataset name (choose from the provided options)",
     type=str,
-    choices=["mnist", "cifar10", "fashion_mnist", "STL", "MBI", "MRB", "MRD", "SVHN", "EuroSAT"],  # 限制可选值
+    choices=["mnist", "cifar10", "fashion_mnist", "STL", "MBI", "MRB", "MRD", "SVHN", "EuroSAT", "CarDD"],  # 限制可选值
     default="SVHN"  # 设置默认值
 )
 
@@ -125,6 +125,15 @@ def create_dataset(dataset):
         y_test = numpy.load(npy_root + '/' + dataset + '/' + dataset + '_test_label.npy')
         Is_RGB=True
         Flag=4
+    elif dataset == "CarDD":
+        # CarDD: 6 类, 使用原始类别分布, 不做长尾采样
+        npy_root = DATASETS_ROOT
+        x_train = numpy.load(npy_root + '/' + dataset + '/' + dataset + '_train_data.npy') / 255.0
+        y_train = numpy.load(npy_root + '/' + dataset + '/' + dataset + '_train_label.npy')
+        x_test = numpy.load(npy_root + '/' + dataset + '/' + dataset + '_test_data.npy') / 255.0
+        y_test = numpy.load(npy_root + '/' + dataset + '/' + dataset + '_test_label.npy')
+        Is_RGB = True
+        Flag = 5
     else:
         if dataset=="mnist":
             train_dataset = IMBALANCEMNIST("train", imbalance_ratio=100, root=os.path.join(DATASETS_ROOT, 'MNIST'))
@@ -172,6 +181,21 @@ def create_dataset(dataset):
                    if opt.lt_mode == "exp"
                    else [200, 158, 126, 100, 79, 63, 50, 40, 32, 20])
         x_train,y_train,x_test,y_test=imbalance_MRBand(x_train,y_train,x_test,y_test,img_num_per_cls)
+        dim = x_train.ndim
+        if dim == 4:
+            shape = x_train.shape
+            if shape[1] != 3:
+                dims = list(range(dim))
+                dims[-1], dims[1] = dims[1], dims[-1]
+                x_train = x_train.transpose(dims)
+                x_test = x_test.transpose(dims)
+                print("jiaohuan")
+    elif Flag == 5:
+        # CarDD: 原始类别分布 (不构造长尾)
+        x_train = x_train.astype(numpy.float32)
+        x_test = x_test.astype(numpy.float32)
+        y_train = y_train.astype(numpy.int64)
+        y_test = y_test.astype(numpy.int64)
         dim = x_train.ndim
         if dim == 4:
             shape = x_train.shape
@@ -475,9 +499,15 @@ def evalTest(toolbox, individual, trainData, trainLabel, test, testL):
         erf.fit(train_norm, trainLabel)
         probabilities = erf.predict_proba(test_norm)  # 获取预测标签
     probabilities = (probabilities - numpy.min(probabilities)) / (numpy.max(probabilities) - numpy.min(probabilities))
-    group1_indices = [0, 1, 2,3]  # 前四类
-    group2_indices = [4, 5,6]  # 中间三类
-    group3_indices = [7, 8, 9]  # 后三类
+    # 6 类数据集 (如 CarDD) 每两类一组; 其余沿用原来的 4/3/3 划分
+    if int(numpy.max(numpy.concatenate((trainLabel, testL)))) + 1 <= 6:
+        group1_indices = [0, 1]
+        group2_indices = [2, 3]
+        group3_indices = [4, 5]
+    else:
+        group1_indices = [0, 1, 2,3]  # 前四类
+        group2_indices = [4, 5,6]  # 中间三类
+        group3_indices = [7, 8, 9]  # 后三类
     def calculate_group_accuracy(predictions, true_labels, group_indices):
         # 找出属于该组的所有样本的索引
         mask = numpy.isin(true_labels, group_indices)
