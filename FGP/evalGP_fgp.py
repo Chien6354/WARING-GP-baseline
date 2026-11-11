@@ -79,6 +79,11 @@ def eaSimple(population, toolbox, cxpb, mutpb, elitpb, ngen , start_gen, pkl_fil
         for i in hof_store:
             cop_po.append(i)
         population[:] = offspring
+        # 记录当前代 fitness 统计 (max / min / mean)
+        gen_vals = [ind.fitness.values[0] for ind in population if getattr(ind.fitness, "valid", False)]
+        if gen_vals:
+            print(f"Gen {gen}: avg fitness = {round(sum(gen_vals) / len(gen_vals), 6)}, "
+                  f"max fitness = {round(max(gen_vals), 6)}, min fitness = {round(min(gen_vals), 6)}")
         checkpoint_data = {'population': population, 'generation': gen}
         with open(pkl_file, "wb") as cp_file:
             pickle.dump(checkpoint_data, cp_file)

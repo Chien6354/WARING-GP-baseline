@@ -85,14 +85,17 @@ if errorlevel 1 (
     goto :eof
 )
 
-mkdir "log\%DIRNAME%" 2>nul
-mkdir "pkl\%DIRNAME%" 2>nul
-mkdir "csv\%DIRNAME%" 2>nul
+:: 输出统一放到 根目录\output\<方法名>\log|pkl|csv
+set "OUTBASE=%BASE%\output\%PROJ%\"
 
-set "LOGFILE=log\%DIRNAME%\%DS%_1.log"
-set "PKLFILE=pkl\%DIRNAME%\%DS%_1.pkl"
-set "CSVFILE=csv\%DIRNAME%\%DS%_1.csv"
-set "DONEFILE=pkl\%DIRNAME%\%DS%_1.done"
+mkdir "%OUTBASE%log\%DIRNAME%" 2>nul
+mkdir "%OUTBASE%pkl\%DIRNAME%" 2>nul
+mkdir "%OUTBASE%csv\%DIRNAME%" 2>nul
+
+set "LOGFILE=%OUTBASE%log\%DIRNAME%\%DS%_1.log"
+set "PKLFILE=%OUTBASE%pkl\%DIRNAME%\%DS%_1.pkl"
+set "CSVFILE=%OUTBASE%csv\%DIRNAME%\%DS%_1.csv"
+set "DONEFILE=%OUTBASE%pkl\%DIRNAME%\%DS%_1.done"
 
 if exist "%DONEFILE%" (
     echo [Skip] %PROJ% %DS% test run already completed.

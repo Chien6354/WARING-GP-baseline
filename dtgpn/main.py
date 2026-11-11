@@ -475,15 +475,18 @@ def map_evaluate_with_timeout(pool, timeout_sec=EVAL_TIMEOUT_SEC):
 def GPMain(pkl_file, randomSeeds):
     random.seed(randomSeeds)
     try:
-        with open("qwq", "rb") as f:
+        with open(pkl_file, "rb") as f:
             data = pickle.load(f)
         saved_pop = data['population']
 
         local_pop1 = [ind[0] for ind in saved_pop]  # 提取每个个体的第一部分
         global_pop = [ind[1] for ind in saved_pop]  # 提取每个个体的第二部分
-        start_gen = data.get('generation', 0)
+        start_gen = data['generation'] + 1
+        print(f"已读取检查点, Resuming from generation {start_gen}.")
 
-    except FileNotFoundError:
+    except (FileNotFoundError, EOFError, pickle.UnpicklingError, KeyError):
+        # 没有检查点 (或上次写盘被中断导致文件损坏): 初始化新种群
+        print("未找到可用检查点, 从头开始.")
         global_pop = toolbox.population(population)
         local_pop1 = toolbox.population(population)
         start_gen = 1

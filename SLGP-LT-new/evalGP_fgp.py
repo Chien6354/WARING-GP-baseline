@@ -132,11 +132,12 @@ def eaSimple_1(population, population_1, toolbox, toolbox_1, cxpb, mutpb, elitpb
     def print_stats(gen_no):
         vals = [ind.fitness.values[0] for ind in population if getattr(ind.fitness, "valid", False)]
         if len(vals) == 0:
-            avg, mx = 0.0, 0.0
+            avg, mx, mn = 0.0, 0.0, 0.0
         else:
             avg = float(sum(vals)) / len(vals)
             mx = float(max(vals))
-        print(f"Gen {gen_no}: avg fitness = {round(avg, 6)}, max fitness = {round(mx, 6)}")
+            mn = float(min(vals))
+        print(f"Gen {gen_no}: avg fitness = {round(avg, 6)}, max fitness = {round(mx, 6)}, min fitness = {round(mn, 6)}")
 
     # 初始 evaluate 注册（如果从断点恢复，使用上一代作为 current_gen）
     initial_gen = start_gen - 1 if start_gen > 1 else 0
@@ -306,25 +307,30 @@ def eaSimple(population, toolbox, cxpb, mutpb, elitpb, ngen, start_gen, pkl_file
 
     import pickle
 
-    # ====== 新增：记录每代 avg/max fitness ======
+    # ====== 新增：记录每代 avg/max/min fitness ======
     gens = []
     avg_fitnesses = []
     max_fitnesses = []
+    min_fitnesses = []
 
     def compute_and_record_stats(gen_no):
         vals = [ind.fitness.values[0] for ind in population if getattr(ind.fitness, "valid", False)]
         if len(vals) == 0:
             avg = 0.0
             mx = 0.0
+            mn = 0.0
         else:
             avg = float(sum(vals)) / len(vals)
             mx = float(max(vals))
+            mn = float(min(vals))
         avg_r = round(avg, 6)
         mx_r = round(mx, 6)
-        print(f"Gen {gen_no}: avg fitness = {avg_r}, max fitness = {mx_r}")
+        mn_r = round(mn, 6)
+        print(f"Gen {gen_no}: avg fitness = {avg_r}, max fitness = {mx_r}, min fitness = {mn_r}")
         gens.append(gen_no)
         avg_fitnesses.append(avg_r)
         max_fitnesses.append(mx_r)
+        min_fitnesses.append(mn_r)
     # ==========================================
 
     # Evaluate the individuals with an invalid fitness

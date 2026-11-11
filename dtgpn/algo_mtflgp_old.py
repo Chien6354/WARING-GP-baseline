@@ -98,6 +98,12 @@ def evalSimple( global_pop, local_pop1, toolbox, cxpb, mutpb,elitpb,  ngen , sta
 
         hof.update(offspring)
 
+        # 记录当前代 fitness 统计 (max / min / mean)
+        gen_vals = [ind.fitness.values[0] for ind in population if getattr(ind.fitness, "valid", False)]
+        if gen_vals:
+            print(f"Gen {gen}: avg fitness = {round(sum(gen_vals) / len(gen_vals), 6)}, "
+                  f"max fitness = {round(max(gen_vals), 6)}, min fitness = {round(min(gen_vals), 6)}")
+
         checkpoint_data = {
             'population': population,
             'generation': gen,

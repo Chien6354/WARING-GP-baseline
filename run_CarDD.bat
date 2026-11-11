@@ -7,9 +7,9 @@ setlocal enabledelayedexpansion
 ::  Place this file in the project root (same dir as the six method folders).
 ::  EDIT PYTHON_EXE below if your env path differs.
 :: ======================================================================
-set "PYTHON_EXE=D:\softwaredownload\Anaconda\envs\GP\python.exe"
+set "PYTHON_EXE=E:\Code\py311\python.exe"
 
-for %%M in (dtgpn FGP GP-FR GP-FR-recall MEGPE_contrast SLGP-LT-new) do (
+for %%M in (FGP GP-FR GP-FR-recall MEGPE_contrast SLGP-LT-new dtgpn) do (
     echo.
     echo ============================================================
     echo  [CarDD] method: %%M
@@ -39,21 +39,25 @@ exit /b 130
 set "DATASET=CarDD"
 set "LABEL=CarDD"
 
-mkdir "log\!LABEL!" 2>nul
-mkdir "pkl\!LABEL!" 2>nul
-mkdir "csv\!LABEL!" 2>nul
+:: 输出统一放到 根目录\output\<方法名>\log|pkl|csv
+for %%A in ("%CD%") do set "METHOD=%%~nxA"
+set "OUTBASE=%~dp0output\!METHOD!\"
+
+mkdir "!OUTBASE!log\!LABEL!" 2>nul
+mkdir "!OUTBASE!pkl\!LABEL!" 2>nul
+mkdir "!OUTBASE!csv\!LABEL!" 2>nul
 
 for /l %%i in (1,1,5) do (
-    set "LOGFILE=log\!LABEL!\!DATASET!_%%i.log"
-    set "PKLFILE=pkl\!LABEL!\!DATASET!_%%i.pkl"
-    set "CSVFILE=csv\!LABEL!\!DATASET!_%%i.csv"
-    set "DONEFILE=pkl\!LABEL!\!DATASET!_%%i.done"
+    set "LOGFILE=!OUTBASE!log\!LABEL!\!DATASET!_%%i.log"
+    set "PKLFILE=!OUTBASE!pkl\!LABEL!\!DATASET!_%%i.pkl"
+    set "CSVFILE=!OUTBASE!csv\!LABEL!\!DATASET!_%%i.csv"
+    set "DONEFILE=!OUTBASE!pkl\!LABEL!\!DATASET!_%%i.done"
 
     if exist "!DONEFILE!" (
         echo [Skip] !DATASET! seed %%i already completed.
     ) else (
         echo [Start/Resume] !DATASET! seed %%i ...
-        "%PYTHON_EXE%" monitor_subprocess.py --save "!CSVFILE!" --include-children "%PYTHON_EXE%" main.py --log_file "!LOGFILE!" --pkl_file "!PKLFILE!" --dataset !DATASET! --randomSeeds %%i --disable_imb_test --population 100 --generation 50 --num_processes 10
+        "%PYTHON_EXE%" monitor_subprocess.py --save "!CSVFILE!" --include-children "%PYTHON_EXE%" main.py --log_file "!LOGFILE!" --pkl_file "!PKLFILE!" --dataset !DATASET! --randomSeeds %%i --disable_imb_test --population 100 --generation 50 --num_processes 16
 
         if !errorlevel! equ 130 (
             echo [ABORT] Ctrl+C detected, stopping remaining runs.

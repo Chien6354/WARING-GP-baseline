@@ -10,6 +10,7 @@
 **/log_500/
 **/pkl/
 **/log.zip
+output/
 collected_results/
 slgp-增强修复stl-eura/
 __pycache__/

@@ -38,15 +38,19 @@ set "DATASET=%~1"
 set "LABEL=%~2"
 set "LTMODE=%~3"
 
-mkdir "log\!LABEL!" 2>nul
-mkdir "pkl\!LABEL!" 2>nul
-mkdir "csv\!LABEL!" 2>nul
+:: 输出统一放到 根目录\output\<方法名>\log|pkl|csv
+for %%A in ("%CD%") do set "METHOD=%%~nxA"
+set "OUTBASE=%~dp0output\!METHOD!\"
+
+mkdir "!OUTBASE!log\!LABEL!" 2>nul
+mkdir "!OUTBASE!pkl\!LABEL!" 2>nul
+mkdir "!OUTBASE!csv\!LABEL!" 2>nul
 
 for /l %%i in (1,1,30) do (
-    set "LOGFILE=log\!LABEL!\!DATASET!_%%i.log"
-    set "PKLFILE=pkl\!LABEL!\!DATASET!_%%i.pkl"
-    set "CSVFILE=csv\!LABEL!\!DATASET!_%%i.csv"
-    set "DONEFILE=pkl\!LABEL!\!DATASET!_%%i.done"
+    set "LOGFILE=!OUTBASE!log\!LABEL!\!DATASET!_%%i.log"
+    set "PKLFILE=!OUTBASE!pkl\!LABEL!\!DATASET!_%%i.pkl"
+    set "CSVFILE=!OUTBASE!csv\!LABEL!\!DATASET!_%%i.csv"
+    set "DONEFILE=!OUTBASE!pkl\!LABEL!\!DATASET!_%%i.done"
 
     if exist "!DONEFILE!" (
         echo [Skip] !DATASET! seed %%i already completed.

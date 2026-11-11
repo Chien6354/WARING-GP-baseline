@@ -77,15 +77,18 @@ if errorlevel 1 (
     goto :eof
 )
 
-mkdir "log\%DIRNAME%" 2>nul
-mkdir "pkl\%DIRNAME%" 2>nul
-mkdir "csv\%DIRNAME%" 2>nul
+:: 输出统一放到 根目录\output\<方法名>\log|pkl|csv
+set "OUTBASE=%BASE%\output\%PROJ%\"
+
+mkdir "%OUTBASE%log\%DIRNAME%" 2>nul
+mkdir "%OUTBASE%pkl\%DIRNAME%" 2>nul
+mkdir "%OUTBASE%csv\%DIRNAME%" 2>nul
 
 for /l %%i in (1,1,10) do (
-    set "LOGFILE=log\%DIRNAME%\%DS%_%%i.log"
-    set "PKLFILE=pkl\%DIRNAME%\%DS%_%%i.pkl"
-    set "CSVFILE=csv\%DIRNAME%\%DS%_%%i.csv"
-    set "DONEFILE=pkl\%DIRNAME%\%DS%_%%i.done"
+    set "LOGFILE=%OUTBASE%log\%DIRNAME%\%DS%_%%i.log"
+    set "PKLFILE=%OUTBASE%pkl\%DIRNAME%\%DS%_%%i.pkl"
+    set "CSVFILE=%OUTBASE%csv\%DIRNAME%\%DS%_%%i.csv"
+    set "DONEFILE=%OUTBASE%pkl\%DIRNAME%\%DS%_%%i.done"
 
     if exist "!DONEFILE!" (
         echo [Skip] %PROJ% %DS% run %%i already completed.

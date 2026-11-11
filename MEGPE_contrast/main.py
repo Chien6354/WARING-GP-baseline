@@ -620,14 +620,15 @@ toolbox.decorate("mutate", gp.staticLimit(key=operator.attrgetter("height"), max
 def GPMain(pkl_file,randomSeeds):
     random.seed(randomSeeds)
     try:
-        with open("qwq.pkl", "rb") as cp_file:
+        with open(pkl_file, "rb") as cp_file:
             checkpoint_data = pickle.load(cp_file)
             print("已读取")
             pop = checkpoint_data['population']
             start_gen = checkpoint_data['generation'] + 1
             print(f"Resuming from generation {start_gen}.")
-    except FileNotFoundError:
-        # 如果没有找到检查点，则初始化新种群
+    except (FileNotFoundError, EOFError, pickle.UnpicklingError, KeyError):
+        # 没有检查点 (或上次写盘被中断导致文件损坏): 初始化新种群
+        print("未找到可用检查点, 从头开始.")
         pop = toolbox.population(pop_size)
         start_gen = 1
     num_processes = opt.num_processes
