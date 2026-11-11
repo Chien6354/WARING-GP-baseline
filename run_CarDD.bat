@@ -9,7 +9,18 @@ setlocal enabledelayedexpansion
 :: ======================================================================
 set "PYTHON_EXE=E:\Code\py311\python.exe"
 
+echo [Info] PYTHON_EXE=%PYTHON_EXE%
+if not exist "%PYTHON_EXE%" (
+    echo [Fatal] PYTHON_EXE not found: "%PYTHON_EXE%"
+    echo         Please edit the PYTHON_EXE line at the top of this script.
+    exit /b 2
+)
+
 for %%M in (FGP GP-FR GP-FR-recall MEGPE_contrast SLGP-LT-new dtgpn) do (
+    if not exist "%~dp0%%M\" (
+        echo [Fatal] method folder not found: "%~dp0%%M"
+        exit /b 2
+    )
     echo.
     echo ============================================================
     echo  [CarDD] method: %%M
