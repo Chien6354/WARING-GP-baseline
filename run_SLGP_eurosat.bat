@@ -16,7 +16,7 @@ set "METHOD=SLGP-LT-new"
 set "DATASET=EuroSAT"
 set "LABEL=EuroSAT-LT-400"
 set "LTMODE=exp"
-set "SEEDS=9 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30"
+set "SEEDS=26 27 28 29 30"
 
 echo [Info] PYTHON_EXE=%PYTHON_EXE%
 if not exist "%PYTHON_EXE%" (
@@ -65,7 +65,7 @@ for %%i in (%SEEDS%) do (
         echo [Skip] %DATASET% seed %%i already completed.
     ) else (
         echo [Start/Resume] %DATASET% seed %%i ...
-        "%PYTHON_EXE%" monitor_subprocess.py --save "!CSVFILE!" --include-children "%PYTHON_EXE%" main.py --log_file "!LOGFILE!" --pkl_file "!PKLFILE!" --dataset %DATASET% --randomSeeds %%i --lt_mode %LTMODE% --disable_imb_test --population 100 --generation 50 --num_processes 10
+        "%PYTHON_EXE%" monitor_subprocess.py --save "!CSVFILE!" --include-children "%PYTHON_EXE%" main.py --log_file "!LOGFILE!" --pkl_file "!PKLFILE!" --dataset %DATASET% --randomSeeds %%i --lt_mode %LTMODE% --disable_imb_test --population 100 --generation 50 --num_processes 8
 
         if !errorlevel! equ 130 (
             echo [ABORT] Ctrl+C detected, stopping remaining runs.
