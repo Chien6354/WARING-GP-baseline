@@ -1,8 +1,9 @@
+import math
 import pickle
 import random
 from deap import tools,creator,base
 from operator import attrgetter
-from collections import defaultdict
+from collections import Counter, defaultdict
 import logging
 from HOF import HallOfFame
 
@@ -62,6 +63,25 @@ def record_pop(pop, logbook, stats, gen):
     logging.info(logbook.stream)
     return logbook
 
+def evaluate_population(population, toolbox, label):
+    """Assign successful scores and clear stale scores from failed evaluations."""
+    results = toolbox.map(toolbox.evaluate, population)
+    valid = []
+    failures = Counter()
+    for individual, (fitness, failure) in zip(population, results):
+        if fitness is not None and all(math.isfinite(value) for value in fitness):
+            individual.fitness.values = fitness
+            valid.append(individual)
+        else:
+            del individual.fitness.values
+            failures[failure or "non-finite fitness"] += 1
+
+    if failures:
+        details = ", ".join(f"{reason}: {count}" for reason, count in failures.items())
+        print(f"{label}: {len(valid)}/{len(population)} evaluations succeeded ({details})", flush=True)
+    return valid
+
+
 def evalSimple( global_pop, local_pop1, toolbox, cxpb, mutpb,elitpb,  ngen , start_gen, pkl_file ):
     population = []
     print(len(population))
@@ -70,39 +90,31 @@ def evalSimple( global_pop, local_pop1, toolbox, cxpb, mutpb,elitpb,  ngen , sta
         individual = creator.CIndividual([local_pop1[ind], global_pop[ind]])
         population.append(individual)
 
-    fitnesses = toolbox.map(toolbox.evaluate, population)
-    for ind, fit in zip(population, fitnesses):
-        ind.fitness.values = fit
+    valid_population = evaluate_population(population, toolbox, "Initial population")
+    if not valid_population:
+        raise RuntimeError("DTGPN could not start evolution: no valid fitness in the initial population.")
 
     logging.info(len(population))
     hof = HallOfFame(10)
-    hof.update(population)
-    # for i in population:
-        # print(i.fitness.values)
+    hof.update(valid_population)
     for gen in range(start_gen, ngen + 1):
         elitismNum = int(elitpb * len(population))
-        population_for_eli = [toolbox.clone(ind) for ind in population]
+        population_for_eli = [toolbox.clone(ind) for ind in valid_population]
         offspringE = toolbox.selectElitism(population_for_eli, k=elitismNum)
-        offspring = toolbox.select(population, len(population) - elitismNum)
-        # print('select')
-        # for i in offspring:
-        #     print(i.fitness.values)
-        offspring = varAnd(toolbox, cxpb, mutpb, pop_main = offspring)
-        # print('a/fter')
-        # for i in offspring:
-            # print(i.fitness.values)
-        fitnesses = toolbox.map(toolbox.evaluate, offspring)
-        for ind, fit in zip(offspring, fitnesses):
-            ind.fitness.values = fit
-        population= offspring+offspringE
+        offspring = toolbox.select(valid_population, len(population) - len(offspringE))
+        offspring = varAnd(toolbox, cxpb, mutpb, pop_main=offspring)
+        valid_offspring = evaluate_population(offspring, toolbox, f"Gen {gen} offspring")
+        population = offspring + offspringE
+        valid_population = valid_offspring + offspringE
+        if not valid_population:
+            raise RuntimeError(f"DTGPN stopped at generation {gen}: no valid fitness in the population.")
 
-        hof.update(offspring)
+        hof.update(valid_offspring)
 
         # 记录当前代 fitness 统计 (max / min / mean)
-        gen_vals = [ind.fitness.values[0] for ind in population if getattr(ind.fitness, "valid", False)]
-        if gen_vals:
-            print(f"Gen {gen}: avg fitness = {round(sum(gen_vals) / len(gen_vals), 6)}, "
-                  f"max fitness = {round(max(gen_vals), 6)}, min fitness = {round(min(gen_vals), 6)}")
+        gen_vals = [ind.fitness.values[0] for ind in valid_population]
+        print(f"Gen {gen}: avg fitness = {round(sum(gen_vals) / len(gen_vals), 6)}, "
+              f"max fitness = {round(max(gen_vals), 6)}, min fitness = {round(min(gen_vals), 6)}")
 
         checkpoint_data = {
             'population': population,

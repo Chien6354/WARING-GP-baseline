@@ -457,7 +457,7 @@ EVAL_TIMEOUT_SEC = 60.0
 def map_evaluate_with_timeout(pool, timeout_sec=EVAL_TIMEOUT_SEC):
     """
     先批量 apply_async 再 get：进程池能同时跑满多个 worker；若先发再 get 的串行写法
-    则任意时刻只会有一个任务在跑。超时仍用 get(timeout) + (0,0)。
+    则任意时刻只会有一个任务在跑。超时返回失败状态供进化循环记录。
     """
     def _map_func(func, iterable):
         items = list(iterable)
@@ -467,7 +467,7 @@ def map_evaluate_with_timeout(pool, timeout_sec=EVAL_TIMEOUT_SEC):
             try:
                 out.append(r.get(timeout=timeout_sec))
             except multiprocessing.TimeoutError:
-                out.append((0.0, 0.0))
+                out.append((None, "pool timeout"))
         return out
     return _map_func
 
@@ -550,6 +550,7 @@ def _eval_timed_out(t0: float) -> bool:
 def evaluate_dtgpn(individual):
     """
     根据论文 Algorithm 1 实现的评估函数
+    返回 (fitness, failure_reason)，失败时 fitness 为 None。
     """
     t0 = time.perf_counter()
     # 1. 编译双树 (Dual-Tree)
@@ -563,7 +564,7 @@ def evaluate_dtgpn(individual):
     # 遍历所有训练样本
     for i in range(len(y_train1)):
         if _eval_timed_out(t0):
-            return 0.0, 0.0
+            return None, "evaluation timeout"
         if Is_RGB:
             # 假设输入是 (3, H, W) 或类似结构，根据你的 evalTrain 参考代码调整
             img_input = (x_train1[i][0, :, :], x_train1[i][1, :, :], x_train1[i][2, :, :])
@@ -578,18 +579,19 @@ def evaluate_dtgpn(individual):
         # 拼接两个树的特征
         features_list.append(np.concatenate([f1, f2]))
 
-    features_array = np.asarray(features_list)
-
-    # 处理特征提取失败或为空的情况
-    if features_array.size == 0 or np.isnan(features_array).any():
-        return 0.0, 0.0
+    try:
+        features_array = np.asarray(features_list)
+    except ValueError:
+        return None, "inconsistent feature lengths"
+    if features_array.size == 0 or not np.isfinite(features_array).all():
+        return None, "empty or non-finite features"
 
     # 3. 归一化 (Normalization)
     min_max_scaler = MinMaxScaler()
     try:
         X_norm = min_max_scaler.fit_transform(features_array)
     except ValueError:
-        return 0.0, 0.0
+        return None, "feature normalization failed"
 
     # 4. K-Fold Cross Validation (K = number of shots)
     # 论文中 K 等于每类的样本数。例如 3-shot 任务，K=3。
@@ -604,7 +606,7 @@ def evaluate_dtgpn(individual):
 
     for train_index, test_index in skf.split(X_norm, y_train1):
         if _eval_timed_out(t0):
-            return 0.0, 0.0
+            return None, "evaluation timeout"
         X_fold_train, X_fold_test = X_norm[train_index], X_norm[test_index]
         y_fold_train, y_fold_test = y_train1[train_index], y_train1[test_index]
 
@@ -637,7 +639,7 @@ def evaluate_dtgpn(individual):
     # 5. 计算最终适应度 (Equation 1)
     final_fitness = np.mean(fitness_values)
     print(final_fitness)
-    return final_fitness, final_fitness,
+    return (final_fitness, final_fitness), None
 
 def parallel_evalTrain(individual):
     return evaluate_dtgpn(individual)
